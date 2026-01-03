@@ -1,78 +1,73 @@
-name: Tahoe Beta Recovery (com.apple.recovery.boot) via GitHub Releases
+name: Tahoe Beta (latest) Recovery Image
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: write  # Required to create GitHub Releases
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Clone gibMacOS
         run: |
-          git clone https://github.com/corpnewt/gibMacOS.git
+          git clone https://github.com/corpnewt/gibMacOS.git    
 
-      - name: Download macOS Installer (Tahoe beta)
+      - name: Download macOS Installer (latest beta)
         run: |
           python ./gibMacOS/gibMacOS.py -c developer -v Tahoe -m 26 -o /tmp/Tahoe-beta-latest
 
-      - name: Locate RecoveryHDMetaDmg.pkg
+      - name: Install the assistant
         run: |
-          # The recovery image is inside a sub-package
-          find /tmp/Tahoe-beta-latest -name "*RecoveryHDMetaDmg.pkg" | head -n1 > /tmp/recovery_pkg.txt
-          if [ ! -s /tmp/recovery_pkg.txt ]; then
-            echo "❌ RecoveryHDMetaDmg.pkg not found!"
-            find /tmp/Tahoe-beta-latest -type f | sort
+          sudo installer -pkg /tmp/Tahoe-beta-latest/InstallAssistant.pkg -target /
+
+      - name: Generate macOS Installer
+        run: |
+          INSTALLER=$(ls -d /Applications/Install*.app | head -n 1 || true)
+          if [ ! -d "$INSTALLER" ]; then
+            echo "Could not find Install macOS app in /Applications"
+            ls -l /Applications
             exit 1
           fi
-          RECOVERY_PKG=$(cat /tmp/recovery_pkg.txt)
-          echo "Found: $RECOVERY_PKG"
-          echo "$RECOVERY_PKG" > /tmp/RECOVERY_PKG_PATH
+          SIZE_MB=$(du -sm "$INSTALLER" | cut -f1)
 
-      - name: Extract RecoveryHDMeta.dmg from PKG
-        run: |
-          RECOVERY_PKG=$(cat /tmp/RECOVERY_PKG_PATH)
-          pkgutil --expand-full "$RECOVERY_PKG" /tmp/RecoveryExpanded
-          find /tmp/RecoveryExpanded -name "RecoveryHDMeta.dmg" -exec cp {} /tmp/RecoveryHDMeta.dmg \;
-          if [ ! -f /tmp/RecoveryHDMeta.dmg ]; then
-            echo "❌ RecoveryHDMeta.dmg not extracted!"
+          # Add 40% headroom and ceil
+          EXTRA=$(echo "($SIZE_MB * 0.4 + 0.999)/1" | bc)
+          TOTAL_MB=$(( SIZE_MB + EXTRA ))
+
+          echo "Installer size: $SIZE_MB MB"
+          echo "Allocating DMG size: $TOTAL_MB MB"
+
+          sudo hdiutil create -o /tmp/Tahoe -size ${TOTAL_MB}m -volname 'Tahoe' -layout SPUD -fs HFS+J
+          sudo hdiutil attach /tmp/Tahoe.dmg -noverify -mountpoint /Volumes/Tahoe
+          sleep 10
+          sudo "$INSTALLER/Contents/Resources/createinstallmedia" --volume /Volumes/Tahoe --nointeraction
+
+          # Detect created installer volume (it always starts with "Install")
+          INSTALL_VOL=$(ls -d /Volumes/Install* | head -n 1 || true)
+          if [ ! -d "$INSTALL_VOL" ]; then
+            echo "Could not find installer volume in /Volumes"
+            ls -l /Volumes
             exit 1
           fi
+          echo "Found installer volume: $INSTALL_VOL"
 
-      - name: Mount RecoveryHDMeta.dmg and Extract com.apple.recovery.boot
+          cp -R "$INSTALL_VOL/BaseSystem" /tmp/BaseSystem
+
+      - name: Package com.apple.recovery.boot
         run: |
-          hdiutil attach /tmp/RecoveryHDMeta.dmg -mountpoint /tmp/RecoveryMount -readonly
-          sleep 5
-
-          if [ ! -d "/tmp/RecoveryMount/com.apple.recovery.boot" ]; then
-            echo "❌ com.apple.recovery.boot not found in RecoveryHDMeta.dmg"
-            ls -la /tmp/RecoveryMount
-            hdiutil detach /tmp/RecoveryMount || true
-            exit 1
-          fi
-
-          cp -R "/tmp/RecoveryMount/com.apple.recovery.boot" /tmp/
-          hdiutil detach /tmp/RecoveryMount
-
-      - name: Compress com.apple.recovery.boot
-        run: |
+          mkdir -p /tmp/recovery-artifact
+          cp -R /tmp/BaseSystem/com.apple.recovery.boot/* /tmp/recovery-artifact/
           cd /tmp
-          tar -czf Tahoe-Beta-com.apple.recovery.boot.tar.gz com.apple.recovery.boot
+          zip -r Tahoe-Beta-Recovery-Boot.zip recovery-artifact
 
-      - name: Create GitHub Release and Upload
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="tahoe-beta-recovery-$(date -u +%Y%m%d-%H%M)"
-          gh release create "$TAG" \
-            /tmp/Tahoe-Beta-com.apple.recovery.boot.tar.gz \
-            --title "Tahoe Beta: com.apple.recovery.boot ($TAG)" \
-            --notes "Full recovery boot files from RecoveryHDMeta.dmg for macOS Tahoe beta. Includes boot.efi, BaseSystem.dmg, and chunklist." \
-            --latest
-
-          echo "✅ Release published: https://github.com/${{ github.repository }}/releases/tag/$TAG"
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/Tahoe-Beta-Recovery-Boot.zip
+          tag_name: tahoe-beta-recovery-${{ github.run_number }}
+          name: Tahoe Beta Recovery Boot – Build #${{ github.run_number }}
+          draft: false
+          prerelease: true
