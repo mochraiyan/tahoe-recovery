@@ -13,7 +13,7 @@ jobs:
 
       - name: Clone gibMacOS
         run: |
-          git clone https://github.com/corpnewt/gibMacOS.git    
+          git clone https://github.com/corpnewt/gibMacOS.git
 
       - name: Download macOS Installer (latest beta)
         run: |
@@ -35,6 +35,7 @@ jobs:
 
           # Add 40% headroom and ceil
           EXTRA=$(echo "($SIZE_MB * 0.4 + 0.999)/1" | bc)
+
           TOTAL_MB=$(( SIZE_MB + EXTRA ))
 
           echo "Installer size: $SIZE_MB MB"
@@ -56,18 +57,13 @@ jobs:
 
           cp -R "$INSTALL_VOL/BaseSystem" /tmp/BaseSystem
 
-      - name: Package com.apple.recovery.boot
+      - name: Prepare com.apple.recovery.boot folder
         run: |
-          mkdir -p /tmp/recovery-artifact
-          cp -R /tmp/BaseSystem/com.apple.recovery.boot/* /tmp/recovery-artifact/
-          cd /tmp
-          zip -r Tahoe-Beta-Recovery-Boot.zip recovery-artifact
+          mkdir -p /tmp/com.apple.recovery.boot
+          cp -R /tmp/BaseSystem/* /tmp/com.apple.recovery.boot/
 
-      - name: Upload to GitHub Releases
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: /tmp/Tahoe-Beta-Recovery-Boot.zip
-          tag_name: tahoe-beta-recovery-${{ github.run_number }}
-          name: Tahoe Beta Recovery Boot – Build #${{ github.run_number }}
-          draft: false
-          prerelease: true
+          files: /tmp/com.apple.recovery.boot/*
+          token: ${{ secrets.GITHUB_TOKEN }}
