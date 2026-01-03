@@ -62,8 +62,27 @@ jobs:
           mkdir -p /tmp/com.apple.recovery.boot
           cp -R /tmp/BaseSystem/* /tmp/com.apple.recovery.boot/
 
+      - name: Determine and create release tag
+        id: tag
+        run: |
+          TAG_NAME="tahoe-beta-$(date +%Y%m%d)"
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          # Check if tag already exists
+          if git ls-remote --tags origin | grep -q "$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists. Appending timestamp to avoid conflict."
+            TAG_NAME="$TAG_NAME-$(date +%H%M%S)"
+            echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          fi
+          # Create and push the tag
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG_NAME }}
           files: /tmp/com.apple.recovery.boot/*
           token: ${{ secrets.GITHUB_TOKEN }}
